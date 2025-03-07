@@ -1,0 +1,63 @@
+Additional note from Sam Golob...
+
+   The way IBM originally designed the XMIT/RECEIVE package for sending
+files from one MVS system to another, has caused problems.  In order not
+to clog the transmission lines, IBM designed an OUTLIMIT parameter to
+restrict the size of ANY transmitted file, to a certain number of
+80-byte records, Once this number of 80-byte records has been reached,
+the transmission is cut off UNCONDITIONALLY, leaving a partial file,
+which isn't of much use.
+
+   This OUTLIMIT value is LPAR-wide, and an installation can set it to
+be so small, that it would be next to impossible to transmit or receive
+any files of fairly considerable size.  This is the problem that we are
+dealing with.  How do we transmit or receive a file which has more
+records than the OUTLIMIT, when the installation has set the OUTLIMIT
+at a small value?
+
+   This programmer's solution, is to temporarily (for the duration of
+the program) change the OUTLIMIT under APF-authorization, to be big
+enough for the file being transmitted, and then, when we're done, change
+this number back to what it was, so that we don't interfere with the
+installation's main policy.  It is quite a slick solution, and it is
+very necessary to use, for z/OS systems before the 1.9 level.
+
+HOW XMIT REALLY WORKS
+
+   The idea behind TRANSMIT/RECEIVE is really a simple one.  What kinds
+of record formats are most easily transmitted over transmission lines?
+Most people in IBM would agree that these are FB-80 "card image"
+records.  So TRANSMIT (or XMIT), which can handle many file formats,
+first finds a way to convert all of these file formats, including entire
+pds'es, to "80-byte sequential" files.  Once this is done, the files are
+sent on their merry way.
+
+   AHA....!!!!  You can now see that XMIT can convert many types of
+files into FB-80 sequential.  And it therefore follows that if you want
+to have a standard FB-80 format to preserve many types of files in, you
+can use, what has come to be known, as XMIT format.
+
+USING XMIT FOR REFORMATTING FILES INSTEAD OF TRANSMITTING THEM
+
+   We use "TSO XMIT format" to repackage entire pds'es as though they
+were a single member of a pds, and thus, create a CBT Tape file, which
+contains several pds'es among its components.  EACH of these pds members
+is actually a separate entire pds.  So single CBT Tape files, can now
+actually contain many pds'es (in XMIT format) within it.
+
+   IBM finally got the bright idea that if you use the XMIT command
+(with its OUTDSN or OUTDD subcommands) that only reformats the data,
+then THE DATA DOES NOT GO THROUGH ANY TRANSMISSION LINES, and therefore
+we have no need of the OUTLIMIT, in that case.  So from z/OS 1.9 and
+forward, using XMIT with OUTDSN or OUTDD will ignore the OUTLIMIT, and
+complete the creation of the XMIT-file in all cases.  (This was initially
+a SHARE requirement, which took IBM about 15 years to implement.)  But
+before z/OS 1.9, the OUTLIMIT is a strictly enforced requirement in all
+cases.  Hence we need solutions like the SUPERXMT program to get around
+the problem.
+
+   I hope this piece of background knowledge helps.
+
+   Please note the CINMX TSO command, in CBT File 731, which also
+addresses the issue, although not so slickly.
+

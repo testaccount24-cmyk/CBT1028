@@ -1,0 +1,270 @@
+SUPERXMT CSECT
+SUPERXMT AMODE 31
+SUPERXMT RMODE ANY
+***********************************************************************
+**  Change Activity                                                  **
+**                                                                   **
+**  ASL1 - Support Areas longer than 256 bytes to a maximum of 4096  **
+**         Added this comment box                                    **
+**  USR1 - To jump to the table of authorised users enter. F USR1    **
+***********************************************************************
+
+         SAVE  (14,12),,'SUPERXMT &SYSDATE &SYSTIME'
+         LR    12,15
+         USING SUPERXMT,12
+         LR    10,1                    Save CPPL address before
+         USING CPPL,10                    GETMAIN nukes it
+         GETMAIN RU,LV=WORKL           Get some storage
+         LR    11,1
+         USING WORK,11                 Use R11 to map work area
+         LA    2,SAVEAREA              Address of new save area
+         ST    13,4(,2)                Chain back to previous save area
+         ST    2,8(,13)                Chain forward to new save area
+         LR    13,2                    R13 reset to current save area
+* Find userid of user                                                 *
+         L     1,PSATOLD-PSA           Current TCB
+         ICM   1,B'0111',TCBJSCBB-TCB(1)      Get JSCB address
+         ICM   1,B'1111',JSCBPSCB-IEZJSCB(1)  Get PSCB address
+         BNZ   TSOUSER                 If PSCB address <> 0, TSO user
+         WTO   'SUPERXMT is only supported under TSO'
+         B     RETURN
+* Check table of users for authorization                              *
+TSOUSER  DS    0H
+         LA    1,PSCBUSER-PSCB(,1)     Point at userid
+         LA    2,AUTHUSER              Beginning of table
+         LA    3,AUTHUSE#              Number of entries
+USERLOOP DS    0H
+         CLC   0(7,1),0(2)             Userid match ?
+         BE    FRIEND                  Yes...friend
+         LA    2,7(,2)                 Next entry in table
+         BCT   3,USERLOOP              Loop if more entries
+         L     2,CPPLUPT               Get UPT address
+         L     3,CPPLECT               Get ECB address
+         PUTLINE OUTPUT=(MSG1,,,DATA),PARM=PUTLIST,MF=(E,IOPLADS),     X
+               ECT=(3),UPT=(2)         Inform enemy of bad news
+         B     RETURN
+FRIEND   DS    0H                      Here to let command process
+         MVC   ASLUSER,0(2)            Save our userid            ASL1
+         L     2,CVTPTR                Find CVT
+         L     2,CVTTVT-CVT(,2)        Find TSVT
+         L     2,TSVTTPVT-TSVT(,2)     Find TPVT (whatever that is)
+         L     2,X'2C'(,2)             TPVT+X'2C' is INMXPARM pointer
+         USING INMXPARM,2              Use DSECT
+         L     3,OUTWARNS              Get warning level start number
+         L     4,OUTWARNI              Get warning interval
+         L     5,OUTLIMIT              Get the output limit for XMIT
+         STM   2,5,OLDINFO             Save data to be restored later
+* Get into Superman mode, then key 0 to be allowed to update the      *
+* data area in CSA.                                                   *
+         MODESET MODE=SUP              Superman
+         SPKA  X'00'                   Key 0
+* We reset the warning level, warning interval, and limit for         *
+* the TRANSMIT command.  Setting the upper limit to 1,000,000 records *
+* allows one to transmit up to about 80 megabytes of data.            *
+* The data area is in subpool 241, key 0 storage.                     *
+         MVC   OUTWARNS(4),=F'100000'  Start warning at 100,000 records
+         MVC   OUTWARNI(4),=F'100000'  Warn every 100,000 after that
+         MVC   OUTLIMIT(4),=F'1000000' Upper limit is 1,000,000
+* Remove the Superman costume                                         *
+         SPKA  X'80'                   Back to key 8
+         MODESET MODE=PROB             Clark Kent
+         STORAGE OBTAIN,LENGTH=ASLLength,ADDR=(6)                  ASL1
+         USING ASLDSECT,6              Establish Addressability    ASL1
+         ST    6,ASLArea               Save our address            ASL1
+*        MVI   XMITCMD,C' '            Blank out command field     ASL1
+*        MVC   XMITCMD+1(L'XMITCMD-1),XMITCMD                      ASL1
+*        MVC   XMITCMD(5),=C'XMIT '    Put 'XMIT ' into command fieASL1
+* IKJEFTSR - TSO Service Routine Linkage                              *
+* Parms                                                               *
+*   +0 ---> Flags ---> +0  X'00'                                      *
+*                 ---> +1  X'00'  Invoke in auth'd environment        *
+*                          X'01'  Invoke in unauth environment        *
+*                 ---> +2  X'00'  Error - no dump                     *
+*                          X'01'        - dump                        *
+*                 ---> +3  X'01'  Type - command, exec or clist       *
+*                          X'02'       - program                      *
+*   +4 ---> CMD   ---> Command text                                   *
+*   +8 ---> CMDL  ---> Length of command text                         *
+*   +C ---> RC    ---> Return code field                              *
+*  +10  --> REASN ---> Reason code                                    *
+*  +14  --> ABEND ---> ABEND code                                     *
+*  +18  --> PARM  ---> Parms to send to send to program               *
+*  +1C  --> CPPL  ---> Address of CPPL                                *
+*---------------------------------------------------------------------*
+*  Get TSO Command Buffer address from CPPL                           *
+         L     2,CPPLCBUF              Get command buffer
+         LH    1,2(,2)                 Get operands offset
+         LA    3,4(1,2)                Operand at text + 4 + offset
+         LH    1,0(,2)                 Command buffer length
+         AR    1,2                     Add length to start of buffer
+         SR    1,3                     Subtract the address of operands
+         ST    1,SaveR1                Save r1 for later           ASL1
+         BCTR  1,0                     Decrement the length for EX
+         MVC   0(5,6),=C'XMIT '        Move in command             ASL1
+         LA    6,5(6)                  Skip up the buffer          ASL1
+         LR    0,6                     Our area                    ASL1
+         LR    14,3                    Length of command           ASL1
+         L     15,SaveR1               Length                      ASL1
+         L     1,ASLLength2            Get our length              ASL1
+         ICM   15,B'1000',c' '         Set to blanks               ASL1
+         MVCL  0,14                    Move in command             ASL1
+*        L     1,SaveR1                Length                      ASL1
+*        EX    1,MOVEBUF               Move operands to XMIT commanASL1
+*        CLC   ASLUser,=C'MIT002  '    Is it MIT002?               ASL1
+*        BE    ASL                     Yes - Try the new way       ASL1
+*        L     15,CVTPTR               Point to MVS's vector table ASL1
+*        L     15,CVTTVT-CVT(,15)      Point to TSO's vector table ASL1
+*        L     15,TSVTASF-TSVT(,15)    Point to TSO service facilitASl1
+*******************************************************************ASL1
+**                                                                 ASL1
+**       Comment out the old call code                             ASL1
+**                                                                 ASL1
+*******************************************************************ASL1
+*        CALL  (15),                                                  X
+*              (=AL1(0,0,0,1),        Flags                           X
+*              XMITCMD,               Command text                    X
+*              =A(L'XMITCMD),         Length of command text          X
+*              XMITRET,               XMIT return code                X
+*              XTSREAS,               TSO service routine reason code X
+*              XTSRABC),              TSO service routine abend code  X
+*              VL,MF=(E,XCALL)
+*        B     SKIP_TO_END             Now skip                    ASL1
+asl      DS    0H
+         L     1,SaveR1                increase length to account  ASL1
+         LA    1,5(1)                  for the 'XMIT ' part of the ASL1
+         ST    1,SaveR1                command, then save it       ASL1
+         L     6,ASLArea               Re-Establish addressabilty  ASL1
+         L     15,CVTPTR               Point to MVS's vector table ASL1
+         L     15,CVTTVT-CVT(,15)      Point to TSO's vector table ASL1
+         L     15,TSVTASF-TSVT(,15)    Point to TSO service facilitASL1
+*******************************************************************ASL1
+**                                                                 ASL1
+**       This is the new call process                              ASL1
+**                                                                 ASL1
+*******************************************************************ASL1
+         CALL  (15),                                                   X
+               (=AL1(0,0,0,1),         Flags                           X
+               ASLDSECT,               Command text                    X
+               SaveR1,                 Length of command text          X
+               XMITRET,                XMIT return code                X
+               XTSREAS,                TSO service routine reason code X
+               XTSRABC),               TSO service routine abend code  X
+               VL,MF=(E,XCALL)
+SKIP_TO_END DS 0H                      Come here if not IBMUSER    ASL1
+* Superman Mode again to reset values saved                           *
+         L     6,ASLArea               Get ready to free area      ASL1
+         STORAGE RELEASE,LENGTH=ASLLength,ADDR=(6)                 ASL1
+         MODESET MODE=SUP              Superman mode
+         SPKA  X'00'                   Key 0
+         LM    2,5,OLDINFO             Get old values
+         STM   3,5,X'10'(2)            Restore old values
+* Clark Kent Mode again since values are reset                        *
+         SPKA  X'80'                   Key 8
+         MODESET MODE=PROB             Clark Kent mode
+RETURN   DS    0H
+         L     13,SAVEAREA+4           R13 = old save area
+         L     3,XMITRET               Save XMIT return code
+         FREEMAIN RU,LV=WORKL,A=(11)   Free storage
+         LR    15,3                    R15 = return code from XMIT
+         RETURN (14,12),RC=(15)        Return to caller
+* Miscellaneous Static Data
+ASLLength  DC  F'4096'                 Get a full 4096 worth       ASL1
+ASLLength2 DC  F'4091'                 Length without XMIT         ASL1
+*MOVEBUF  MVC   XMITCMD+5(*-*),0(3)    Move operands to XMIT commanASL1
+*                                                                  ASL1
+*AUTHUSER DC    CL7'CD9P07 '            Table of users authorized tASL1
+*******************************************************************ASL1
+**                                                                 ASL1
+**       The table of authorised users follows                     ASL1
+**                                                                 ASL1
+*******************************************************************ASL1
+*  USR1   USR1   USR1   USR1   USR1   USR1   USR1   USR1   USR1    ASL1
+AUTHUSER DS    0H                      Table of authorised users   ASL1
+         DC    CL7'CZT001 '                                        ASL1
+         DC    CL7'IBMUSER'
+         DC    CL7'MIT001 '
+         DC    CL7'MIT002 '
+AUTHUSE# EQU   (*-AUTHUSER)/7          Number of entries
+MSG1     DC    AL2(L'MSG1TEXT+4),AL2(0)
+MSG1TEXT DC    C'You are not authorized to use SUPERXMT'
+*******************************************************************ASL1
+**                                                                 ASL1
+**       Define our area (4096 bytes) and call it ASLDSECT         ASL1
+**                                                                 ASL1
+*******************************************************************ASL1
+ASLDSECT DSECT
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *   This is a 4K Area that is   ASL1
+         DS    CL256               *   used to build the XMIT      ASL1
+         DS    CL256               *   command to be issued.       ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+         DS    CL256               *                               ASL1
+ASLL     EQU   *-ASLDSECT                                          ASL1
+WORK     DSECT
+XMITRET  DS    A                       XMIT command return code field
+XTSREAS  DS    A                       TSO service routine reason code
+XTSRABC  DS    A                       TSO service routine abend code
+SAVEAREA DS    18F                     Standard save area
+OLDINFO  DS    4A                      Save area for values changed
+ASLArea  DS    F                   Our Save area for gotten area   ASL1
+SaveR1   DS    F                   Our Save area for R1            ASL1
+ASLLen   DS    F                   For length of command           ASL1
+ASLUSER  DS    CL7                 Our USERID Save area            ASL1
+XCALL    CALL  ,(,,,,,,,,,,,,,,,,,,,,,,,),VL,MF=L
+XMITCMD  DS    CL256                   Big long command area
+PUTLIST  PUTLINE MF=L                  PUTLINE list format
+IOPLADS  DS    4F                      IOPL words required by PUTLINE
+WORKL    EQU   *-WORK
+* Assembler DSECT Layout of the INMXPARMs module/data area            *
+INMXPARM DSECT                     DSECT for INMXPARM stuff
+NAME     DS    CL8                 Name = INMXPARM
+LENGTH   DS    AL2                 Size of INMXPARM
+NUMNODES DS    AL2                 Number of node entries in INMXPARM
+NODETABA DS    A                   Address of the node table
+         DS    F                   Our Save area                   ASL1
+OUTWARNS DS    F                   XMIT starts warning at this level
+OUTWARNI DS    F                   XMIT warning interval
+OUTLIMIT DS    F                   XMIT limit in 80-byte records
+         DS    XL8                 Reserved
+VIOUNITL DS    F                   VIO Unit name length
+VIOUNIT  DS    CL8                 VIO Unit name
+         DS    A                   Reserved
+         DS    A                   Reserved
+         DS    X                   Reserved
+         DS    X                   Reserved
+COPYCLS  DS    C                   IEBCOPY messages sysout class
+         DS    X                   Reserved
+LOGLLQ   DS    CL8                 XMIT/RECEIVE log LLQ
+LOGLLQL  DS    H                   Length of LOGLLQ
+LOGQUAL  DS    CL10                Qualifier to precede LOGLLQ
+LOGQUALL DS    H                   Length of LOGQUAL
+SYSCTL   DS    CL44                Default system control dataset
+SYSCTLL  DS    H                   Length of SYSCTL name
+USRCTL   DS    CL44                User control dataset LLQs
+USRCTLL  DS    H                   Length of USRCTL
+SPOOLCL  DS    C                   Output class to use for NJE
+* Node Entries follow the above transmit/receive parameters           *
+* One Entry per node defined in INMNODE macros or using IKJTSO00      *
+* member of SYS1.PARMLIB                                              *
+NODETAB  DSECT                     Node Table DSECT
+NODENAME DS    CL8                 Node Name
+NODESMF  DS    CL4                 SMF ID
+NODERSVD DS    XL4                 Reserved
+         IKJTSVT
+         CVT   DSECT=YES
+         IKJCPPL
+         IHAPSA
+         IKJTCB
+         IKJPSCB
+         IEZJSCB
+         END
